@@ -1,0 +1,38 @@
+@startuml 02-master-workers
+title Nginx Internal Architecture - Master + Workers
+
+skinparam defaultFontName Consolas
+skinparam componentStyle rectangle
+
+package "NGINX Process Tree" {
+
+  component "MASTER PROCESS\n(runs as root)\n- reads nginx.conf\n- handles signals\n- reloads config\n- spawns workers" as Master #LightCoral
+
+  component "Worker 1\n(epoll loop)" as W1 #LightGreen
+  component "Worker 2\n(epoll loop)" as W2 #LightGreen
+  component "Worker N\n(epoll loop)" as WN #LightGreen
+
+  Master --> W1 : fork()
+  Master --> W2 : fork()
+  Master --> WN : fork()
+}
+
+cloud "Concurrent Connections\n(1000s per worker)" as Conns
+
+W1 ..> Conns
+W2 ..> Conns
+WN ..> Conns
+
+note bottom of Master
+  One worker per CPU core
+  (worker_processes auto;)
+end note
+
+note bottom of W1
+  Single-threaded.
+  Non-blocking I/O via epoll (Linux),
+  kqueue (BSD), or IOCP (Windows).
+  No thread-per-request overhead.
+end note
+
+@enduml

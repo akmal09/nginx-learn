@@ -1,0 +1,58 @@
+@startuml 04-config-matching
+title Nginx Config Matching - How a Request Becomes a Response
+
+skinparam defaultFontName Consolas
+skinparam sequenceMessageAlign center
+
+actor Client
+participant "Nginx\n(listen :80)" as Nginx
+participant "server block\nserver_name example.com" as Server
+participant "location /api/" as LocApi
+participant "location /" as LocRoot
+participant "upstream app\n(app1:3000, app2:3000)" as Upstream
+database "/var/www\n(static files)" as Files
+
+Client -> Nginx : GET /api/users\nHost: example.com
+
+Nginx -> Server : match listen + server_name
+activate Server
+
+Server -> Server : compare location prefixes\n(longest match wins)
+
+Server -> LocApi : /api/ matches
+activate LocApi
+LocApi -> Upstream : proxy_pass http://app\n(round-robin)
+activate Upstream
+Upstream -> Upstream : pick app1 or app2
+Upstream --> LocApi : 200 OK + body
+deactivate Upstream
+LocApi --> Server : response
+deactivate LocApi
+
+Server --> Nginx : response
+deactivate Server
+Nginx --> Client : 200 OK
+
+== Different request ==
+
+Client -> Nginx : GET /index.html\nHost: example.com
+Nginx -> Server : match listen + server_name
+activate Server
+Server -> LocRoot : / matches (fallback)
+activate LocRoot
+LocRoot -> Files : read /var/www/index.html
+Files --> LocRoot : file bytes
+LocRoot --> Server : response (sendfile)
+deactivate LocRoot
+Server --> Nginx : response
+deactivate Server
+Nginx --> Client : 200 OK
+
+note over Nginx, Upstream
+  Matching order:
+  1. listen address + port
+  2. server_name (exact > wildcard > regex)
+  3. location (exact "=" > prefix "^~" > regex "~" > prefix)
+end note
+
+@enduml

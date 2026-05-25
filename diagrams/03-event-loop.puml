@@ -1,0 +1,56 @@
+@startuml 03-event-loop
+title Nginx Worker - Request Lifecycle (Event Loop)
+
+skinparam defaultFontName Consolas
+
+start
+
+:epoll_wait()
+(park until any FD is ready);
+
+if (event type?) then (new connection)
+  :accept() new socket;
+  :register socket with epoll;
+elseif (socket readable) then (request data)
+  :read() request bytes;
+  :parse HTTP headers;
+  :match server_name + location;
+
+  if (handler?) then (static file)
+    :open file (sendfile);
+    :queue response;
+  elseif (handler?) then (proxy_pass)
+    :open upstream connection;
+    :forward request;
+    note right
+      Worker does NOT block here.
+      Connection is parked until
+      upstream replies.
+    end note
+  else (fastcgi / other)
+    :dispatch to module;
+  endif
+
+elseif (socket writable) then (response ready)
+  :write() bytes to client;
+  if (response done?) then (yes)
+    :keep-alive or close;
+  else (no)
+    :wait for more buffer space;
+  endif
+
+else (timer / signal)
+  :run timer callback;
+endif
+
+:return to epoll_wait();
+stop
+
+note right
+  ONE worker thread handles
+  thousands of connections by
+  multiplexing on ready events.
+  Never blocks on I/O.
+end note
+
+@enduml

@@ -1,0 +1,34 @@
+@startuml 01-reverse-proxy
+title Nginx as a Reverse Proxy (High-Level)
+
+skinparam componentStyle rectangle
+skinparam defaultFontName Consolas
+
+actor "Client A" as A
+actor "Client B" as B
+actor "Client C" as C
+actor "...10k+ clients" as N
+
+node "NGINX\nport 80 / 443" as NGINX #LightBlue
+
+node "Backend 1\napp:3000" as B1
+node "Backend 2\napp:3001" as B2
+node "Backend 3\napp:3002" as B3
+
+A --> NGINX
+B --> NGINX
+C --> NGINX
+N --> NGINX
+
+NGINX --> B1 : proxy_pass
+NGINX --> B2 : proxy_pass
+NGINX --> B3 : proxy_pass
+
+note right of NGINX
+  Sits between many clients
+  and a few backend workers.
+  Handles TLS, load balancing,
+  caching, and rate limiting.
+end note
+
+@enduml
