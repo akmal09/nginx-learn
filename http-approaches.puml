@@ -1,0 +1,152 @@
+@startuml CGI Approach
+title 1. CGI Approach — 10 Requests = 10 JVM Processes
+
+skinparam sequenceArrowThickness 2
+skinparam BoxPadding 10
+
+actor "Client 1" as C1
+actor "Client 2" as C2
+actor "Client 3" as C3
+
+box "Web Server" #LightBlue
+    participant "Apache/Nginx" as Apache
+end box
+
+box "OS — new process per request" #LightCoral
+    participant "Process 1\n(JVM boot ~500ms)" as P1
+    participant "Process 2\n(JVM boot ~500ms)" as P2
+    participant "Process 3\n(JVM boot ~500ms)" as P3
+end box
+
+C1 -> Apache: GET /api/todos
+Apache -> P1: spawn process\njava -cp myapp.jar Main
+activate P1
+P1 -> P1: JVM startup
+P1 -> P1: run code
+P1 --> Apache: raw HTTP response
+Apache --> C1: HTTP Response
+deactivate P1
+P1 -> P1: process killed ✗
+
+C2 -> Apache: GET /api/todos
+Apache -> P2: spawn process\njava -cp myapp.jar Main
+activate P2
+P2 -> P2: JVM startup
+P2 -> P2: run code
+P2 --> Apache: raw HTTP response
+Apache --> C2: HTTP Response
+deactivate P2
+P2 -> P2: process killed ✗
+
+C3 -> Apache: GET /api/todos
+Apache -> P3: spawn process\njava -cp myapp.jar Main
+activate P3
+P3 -> P3: JVM startup
+P3 -> P3: run code
+P3 --> Apache: raw HTTP response
+Apache --> C3: HTTP Response
+deactivate P3
+P3 -> P3: process killed ✗
+
+note over P1, P3
+  Each request = new JVM process
+  Heavy memory usage
+  ~500ms startup cost per request
+end note
+@enduml
+
+' ─────────────────────────────────────────────────────────
+
+@startuml Raw Java Socket Approach
+title 2. Raw Java Socket — Manual HTTP Parsing
+
+skinparam sequenceArrowThickness 2
+skinparam BoxPadding 10
+
+actor "Client" as C
+
+box "Java Application" #LightGreen
+    participant "ServerSocket\n:8080" as SS
+    participant "Socket\n(per client)" as S
+    participant "Your Code\n(manual parsing)" as Code
+end box
+
+C -> SS: TCP Connection on port 8080
+SS -> S: accept()
+S --> C: connection established
+
+C -> S: raw HTTP text\n"GET /api/todos HTTP/1.1\nHost: localhost\n..."
+S -> Code: getInputStream()
+Code -> Code: readLine()\n→ parse method (GET)\n→ parse path (/api/todos)\n→ parse headers\n→ parse body
+
+Code -> Code: run business logic
+
+Code -> S: getOutputStream()\nwrite raw HTTP text:\n"HTTP/1.1 200 OK\r\n"\n"Content-Type: application/json\r\n"\n"\r\n"\n"[{\"id\":1}]"
+
+S --> C: raw HTTP response
+
+note over Code
+  Developer must manually:
+  - Parse HTTP method, path, headers, body
+  - Write HTTP status line
+  - Write response headers
+  - Handle connection lifecycle
+  - Implement HTTP spec correctly
+end note
+@enduml
+
+' ─────────────────────────────────────────────────────────
+
+@startuml Servlet API Approach
+title 3. Servlet API — 10 Requests = 10 Threads in ONE JVM
+
+skinparam sequenceArrowThickness 2
+skinparam BoxPadding 10
+
+actor "Client 1" as C1
+actor "Client 2" as C2
+actor "Client 3" as C3
+
+box "One JVM Process (started once)" #LightBlue
+    participant "Tomcat\n(web server)" as Tomcat
+
+    box "Thread Pool" #LightYellow
+        participant "Thread 1" as T1
+        participant "Thread 2" as T2
+        participant "Thread 3" as T3
+    end box
+
+    participant "servlet-api\nHttpServletRequest\nHttpServletResponse" as SAPI
+    participant "TodoServlet\ndoGet()\ndoPost()" as Servlet
+end box
+
+Tomcat -> Tomcat: JVM starts once\nwhen Tomcat starts
+
+C1 -> Tomcat: GET /api/todos
+Tomcat -> T1: assign thread
+T1 -> SAPI: wrap into HttpServletRequest
+SAPI -> Servlet: doGet(req, resp)
+Servlet --> T1: write JSON response
+T1 --> C1: HTTP Response
+
+C2 -> Tomcat: POST /api/todos
+Tomcat -> T2: assign thread
+T2 -> SAPI: wrap into HttpServletRequest
+SAPI -> Servlet: doPost(req, resp)
+Servlet --> T2: write JSON response
+T2 --> C2: HTTP Response
+
+C3 -> Tomcat: DELETE /api/todos/1
+Tomcat -> T3: assign thread
+T3 -> SAPI: wrap into HttpServletRequest
+SAPI -> Servlet: doDelete(req, resp)
+Servlet --> T3: write JSON response
+T3 --> C3: HTTP Response
+
+note over T1, T3
+  One JVM — started once
+  Threads are lightweight (~1ms)
+  servlet-api handles all HTTP parsing
+  You only write business logic
+end note
+@enduml

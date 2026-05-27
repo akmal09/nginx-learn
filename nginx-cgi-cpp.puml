@@ -1,0 +1,79 @@
+@startuml Nginx CGI with C++ Hello World
+title Nginx Common Gateway Interface (CGI) — Inbound Request → Compile C++ → "Hello World"
+
+skinparam sequenceArrowThickness 2
+skinparam BoxPadding 10
+skinparam NoteBackgroundColor #FFFACD
+skinparam NoteBorderColor #DAA520
+
+actor "Client" as Client
+
+box "Web Server" #LightBlue
+    participant "Nginx\n(port 80)" as Nginx
+end box
+
+box "OS — CGI Process (per request)" #LightCoral
+    participant "g++ Compiler" as Compiler
+    participant "hello\n(compiled binary)" as Binary
+end box
+
+participant "Filesystem" as FS
+
+Client -> Nginx: GET /cgi-bin/hello HTTP/1.1
+
+note over Nginx
+  nginx.conf:
+  location /cgi-bin/ {
+    root  /var/www;
+    fastcgi_pass  unix:/run/fcgiwrap.sock;
+  }
+end note
+
+Nginx -> FS: locate hello.cpp\n(/var/www/cgi-bin/hello.cpp)
+FS --> Nginx: file found
+
+Nginx -> Compiler: spawn process\ng++ /var/www/cgi-bin/hello.cpp -o /tmp/hello
+activate Compiler
+Compiler -> Compiler: parse & compile\nhello.cpp
+Compiler -> FS: write compiled binary\n/tmp/hello
+Compiler --> Nginx: exit code 0 (success)
+deactivate Compiler
+
+Nginx -> Binary: spawn CGI process\n/tmp/hello
+activate Binary
+
+note over Binary
+  hello.cpp source:
+  ──────────────────────────────
+  #include <iostream>
+  int main() {
+    std::cout << "Content-Type: text/plain\r\n";
+    std::cout << "\r\n";
+    std::cout << "Hello World\n";
+    return 0;
+  }
+  ──────────────────────────────
+  CGI rule: write HTTP headers first,
+  then a blank line, then the body.
+end note
+
+Binary -> Binary: write to stdout:\n"Content-Type: text/plain\r\n"\n"\r\n"\n"Hello World\n"
+Binary --> Nginx: stdout captured\nexit code 0
+deactivate Binary
+Binary -> Binary: process killed ✗
+
+Nginx -> Nginx: parse CGI stdout\nstatus  → 200 OK\nbody    → "Hello World"
+Nginx --> Client: HTTP/1.1 200 OK\nContent-Type: text/plain\n\nHello World
+
+note over Client, FS
+  Per-request cost breakdown:
+  1. Disk read   — locate hello.cpp
+  2. g++ spawn   — compile (~100–500 ms first time)
+  3. Binary spawn — run & capture stdout
+  4. Process killed after every response
+
+  Practical optimization: pre-compile hello.cpp once
+  and skip steps 1–2. Real CGI setups never recompile
+  on every request — only run the binary.
+end note
+@enduml
