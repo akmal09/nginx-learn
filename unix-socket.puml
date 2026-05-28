@@ -1,0 +1,132 @@
+@startuml Unix Socket vs TCP Socket
+title Unix Socket vs TCP Socket — Side by Side
+
+skinparam sequenceArrowThickness 2
+skinparam BoxPadding 10
+skinparam NoteBackgroundColor #FFFACD
+skinparam NoteBorderColor #DAA520
+
+== TCP Socket (network) ==
+
+actor "Client\n(browser)" as Client1
+
+box "Machine A" #LightBlue
+    participant "Nginx\n:80" as Nginx1
+end box
+
+box "Machine A or B" #LightGreen
+    participant "Go App\n:8080" as GoTCP
+end box
+
+Client1 -> Nginx1: GET / HTTP/1.1
+Nginx1 -> GoTCP: proxy_pass\nhttp://localhost:8080\n(goes through network stack)
+GoTCP --> Nginx1: HTTP response
+Nginx1 --> Client1: HTTP/1.1 200 OK
+
+note over Nginx1, GoTCP
+  TCP: data travels through
+  full network stack even on
+  the same machine.
+  Identifier: IP:PORT
+end note
+
+== Unix Socket (same machine only) ==
+
+actor "Client\n(browser)" as Client2
+
+box "Same Machine — OS Kernel" #LightCoral
+    participant "Nginx\n:80" as Nginx2
+    participant "Kernel\nIPC Buffer" as Kernel
+    participant "Go App\n(no port)" as GoUnix
+end box
+
+participant "/run/myapp.sock\n(socket file)" as SockFile
+
+Client2 -> Nginx2: GET / HTTP/1.1
+
+Nginx2 -> SockFile: connect to\n/run/myapp.sock
+SockFile -> Kernel: OS routes through\ninternal IPC buffer
+Kernel -> GoUnix: deliver request\n(no network stack)
+GoUnix -> GoUnix: execute handler\ndoSomeWork()
+GoUnix --> Kernel: write response\nto IPC buffer
+Kernel --> Nginx2: response delivered\nthrough socket file
+Nginx2 --> Client2: HTTP/1.1 200 OK
+
+note over Nginx2, GoUnix
+  Unix socket: data never
+  leaves the kernel.
+  Faster + no port exposed.
+  Identifier: /run/myapp.sock
+end note
+
+@enduml
+
+' ─────────────────────────────────────────────────────────
+
+@startuml Unix Socket Nginx Go App
+title Unix Socket — Nginx forwarding request to Go App
+
+skinparam sequenceArrowThickness 2
+skinparam BoxPadding 10
+skinparam NoteBackgroundColor #FFFACD
+skinparam NoteBorderColor #DAA520
+
+actor "Client" as Client
+
+box "Network" #LightYellow
+    participant "Port 80\n(public)" as Port
+end box
+
+box "Same Machine — OS" #LightBlue
+    participant "Nginx" as Nginx
+    participant "/run/myapp.sock\n(socket file)" as Sock
+    participant "Go App\n(no port exposed)" as Go
+end box
+
+note over Port
+  Only port 80 is
+  exposed to the outside.
+  Go app has no open port.
+end note
+
+Client -> Port: GET /hello HTTP/1.1
+Port -> Nginx: incoming connection
+
+note over Nginx
+  nginx.conf:
+  location / {
+    proxy_pass http://unix:/run/myapp.sock;
+  }
+end note
+
+Nginx -> Sock: write request bytes\nto socket file
+activate Sock
+Sock -> Go: OS delivers bytes\nvia kernel IPC buffer
+activate Go
+
+note over Go
+  Go code:
+  listener, _ := net.Listen("unix", "/run/myapp.sock")
+  http.HandleFunc("/hello", helloHandler)
+  http.Serve(listener, nil)
+end note
+
+Go -> Go: helloHandler() triggered\n→ doSomeWork()\n→ return "Hello World"
+
+Go --> Sock: write response bytes\nback to socket
+deactivate Go
+Sock --> Nginx: OS delivers response\nto nginx
+deactivate Sock
+
+Nginx --> Port: HTTP/1.1 200 OK\n"Hello World"
+Port --> Client: HTTP/1.1 200 OK\n"Hello World"
+
+note over Client, Go
+  Key points:
+  - Go app never opens a TCP port
+  - Communication stays inside the OS kernel
+  - /run/myapp.sock is just an address, not a real file
+  - Faster than TCP because no network stack traversal
+end note
+
+@enduml
